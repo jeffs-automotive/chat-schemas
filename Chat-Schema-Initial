@@ -1,1 +1,369 @@
+openapi: 3.1.0
+info:
+  title: GPT Memory Vector Store Action
+  version: "1.0.2"
+  description: Store, retrieve, and manage conversation memory in vector store vs_6937632567ac8191adf6610c3c355921 using the OpenAI Vector Store APIs.
 
+servers:
+  - url: https://api.openai.com
+
+security:
+  - BearerAuth: []
+
+paths:
+  /v1/files:
+    post:
+      operationId: upload_memory_file
+      summary: Upload memory text as a file for storage.
+      description: >
+        Upload raw conversation text as a file with purpose "assistants".
+        Use the returned file_id with store_memory to attach it to the vector store.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Raw memory text content to persist.
+                purpose:
+                  type: string
+                  enum: [assistants]
+                  description: Must be "assistants" for vector store ingestion.
+              required: [file, purpose]
+      responses:
+        "200":
+          description: Uploaded file metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileObject"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v1/vector_stores/vs_6937632567ac8191adf6610c3c355921/files:
+    post:
+      operationId: store_memory
+      summary: Attach an uploaded file to the vector store as memory.
+      description: >
+        Provide the file_id from upload_memory_file. Optionally attach attributes
+        for filtering and set a chunking strategy to preserve detail.
+      parameters:
+        - name: OpenAI-Beta
+          in: header
+          required: true
+          description: Beta header required for vector store operations.
+          schema:
+            type: string
+            default: assistants=v2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                file_id:
+                  type: string
+                  description: File ID returned by upload_memory_file.
+                attributes:
+                  $ref: "#/components/schemas/MemoryAttributes"
+                chunking_strategy:
+                  $ref: "#/components/schemas/ChunkingStrategy"
+              required: [file_id]
+      responses:
+        "200":
+          description: Vector store file association.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VectorStoreFileObject"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v1/vector_stores/vs_6937632567ac8191adf6610c3c355921/files/{file_id}:
+    get:
+      operationId: get_memory_file_status
+      summary: Get status and error details for a memory file in the vector store
+      description: >
+        Retrieve the current status and any ingestion error details for a vector
+        store file. Use this to debug files that appear as failed or do not
+        show up in search results.
+      parameters:
+        - name: OpenAI-Beta
+          in: header
+          required: true
+          description: Beta header required for vector store operations.
+          schema:
+            type: string
+            default: assistants=v2
+        - name: file_id
+          in: path
+          required: true
+          description: ID of the vector store file to inspect.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Current status and error details for the vector store file.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VectorStoreFileObject"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+    delete:
+      operationId: delete_memory_file
+      summary: Delete (detach) an old memory file from the vector store
+      description: >
+        Remove a file from the memory vector store when its content has been replaced
+        by a newer file with updated details. This does NOT delete the underlying file
+        object, only the link from this vector store.
+      parameters:
+        - name: OpenAI-Beta
+          in: header
+          required: true
+          description: Beta header required for vector store operations.
+          schema:
+            type: string
+            default: assistants=v2
+        - name: file_id
+          in: path
+          required: true
+          description: ID of the vector store file to delete from this vector store.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deletion status from the vector store.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  object:
+                    type: string
+                    example: vector_store.file.deleted
+                  deleted:
+                    type: boolean
+                required: [id, object, deleted]
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v1/vector_stores/vs_6937632567ac8191adf6610c3c355921/search:
+    post:
+      operationId: search_memory
+      summary: Semantic search over stored memories.
+      description: >
+        Search the vector store for relevant memory chunks using a natural
+        language query. Returns full text chunks and attributes for
+        high-fidelity recall.
+      parameters:
+        - name: OpenAI-Beta
+          in: header
+          required: true
+          description: Beta header required for vector store operations.
+          schema:
+            type: string
+            default: assistants=v2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                query:
+                  type: string
+                  description: Natural language search query written by the model.
+                max_num_results:
+                  type: integer
+                  minimum: 1
+                  maximum: 50
+                  default: 10
+                  description: Maximum number of results to return.
+                rewrite_query:
+                  type: boolean
+                  default: false
+                  description: Whether to rewrite the query for better vector search.
+              required: [query]
+      responses:
+        "200":
+          description: Search results.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VectorStoreSearchResults"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    FileObject:
+      type: object
+      properties:
+        id:
+          type: string
+          description: File identifier to use when attaching to the vector store.
+        object:
+          type: string
+          example: file
+        bytes:
+          type: integer
+        created_at:
+          type: integer
+          format: int64
+        filename:
+          type: string
+        purpose:
+          type: string
+          example: assistants
+        status:
+          type: string
+        status_details:
+          type: string
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+      required: [id, object, created_at, filename, purpose]
+
+    MemoryAttributes:
+      type: object
+      description: >
+        Optional attributes to make memories filterable (e.g. title, category, tags).
+        Keys and values are used for filters in search_memory if added later.
+      properties: {}
+      additionalProperties:
+        type: string
+
+    ChunkingStrategy:
+      oneOf:
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [auto]
+              description: Default automatic chunking.
+          required: [type]
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [static]
+            max_chunk_size_tokens:
+              type: integer
+              description: Maximum tokens per chunk; larger values preserve more context.
+            chunk_overlap_tokens:
+              type: integer
+              description: Overlap in tokens between adjacent chunks.
+          required: [type, max_chunk_size_tokens]
+
+    VectorStoreFileObject:
+      type: object
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          example: vector_store.file
+        usage_bytes:
+          type: integer
+        created_at:
+          type: integer
+          format: int64
+        vector_store_id:
+          type: string
+        status:
+          type: string
+          description: Ingestion status (e.g., in_progress, completed, failed).
+        status_details:
+          type: string
+        last_error:
+          type: object
+          nullable: true
+          description: Error details if ingestion failed.
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+        attributes:
+          $ref: "#/components/schemas/MemoryAttributes"
+      required: [id, object, vector_store_id, status]
+
+    VectorStoreSearchResult:
+      type: object
+      properties:
+        file_id:
+          type: string
+        filename:
+          type: string
+        score:
+          type: number
+        attributes:
+          $ref: "#/components/schemas/MemoryAttributes"
+        content:
+          type: array
+          description: Retrieved content chunks.
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                enum: [text]
+              text:
+                type: string
+            required: [type, text]
+      required: [file_id, score, content]
+
+    VectorStoreSearchResults:
+      type: object
+      properties:
+        object:
+          type: string
+          example: vector_store.search_results.page
+        search_query:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/VectorStoreSearchResult"
+        has_more:
+          type: boolean
+        next_page:
+          type: string
+          nullable: true
+      required: [object, search_query, data, has_more]
+
+  responses:
+    ErrorResponse:
+      description: API error response.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  type:
+                    type: string
+                  param:
+                    type: string
+                  code:
+                    type: string
